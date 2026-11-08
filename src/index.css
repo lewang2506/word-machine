@@ -1,0 +1,149 @@
+/* Astryx 样式引入（顺序即层叠顺序，勿调整）：
+   reset.css (@layer reset) → astryx.css (@layer astryx-base)
+   主题 token 由 <Theme> provider 源码导入并运行时注入（@layer astryx-theme）。 */
+@import '@astryxdesign/core/reset.css';
+@import '@astryxdesign/core/astryx.css';
+
+/* 教师端 gothic 主题的品牌色微调：accent 校准为 4R 蓝（作用域到主题属性，不在 :root 覆盖） */
+[data-astryx-theme='gothic'] {
+  --color-accent: oklch(0.6 0.185 262);
+}
+
+/* ===== 页面级通用（全部引用 Astryx 语义 token） ===== */
+.page-body {
+  min-height: 100vh;
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-background-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-container);
+}
+
+.stat-card-value {
+  font-size: var(--font-size-4xl, 28px);
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-card-sub {
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-text-secondary);
+}
+
+/* 三态人数条（数据驱动宽度，非装饰样式） */
+.tri-bar {
+  display: flex;
+  height: var(--spacing-3);
+  border-radius: var(--radius-pill, 999px);
+  overflow: hidden;
+}
+
+.tri-bar-segment {
+  height: 100%;
+}
+
+/* ===== 学生端：单词机桌面 ===== */
+.student-desktop {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(120% 90% at 20% 0%, var(--color-background-accent-soft) 0%, transparent 55%),
+    var(--color-background-body);
+  font-family: var(--font-family-body);
+}
+
+.student-statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-2) var(--spacing-5);
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-text-secondary);
+}
+
+.student-grid-area {
+  flex: 1;
+  padding: var(--spacing-10) var(--spacing-8);
+}
+
+.app-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--spacing-2);
+  border-radius: var(--radius-container);
+  font-family: inherit;
+}
+
+.app-icon:hover {
+  background: var(--color-background-accent-soft);
+}
+
+.app-icon-tile {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-card, 16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: var(--shadow-low, 0 2px 8px rgba(0, 0, 0, 0.12));
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.app-icon-label {
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-text-primary);
+}
+
+/* 原生应用图标底色（消费级插画色，非语义状态色） */
+.tile-a { background: linear-gradient(135deg, #4f8dff, #7db2ff); }
+.tile-b { background: linear-gradient(135deg, #34c3a3, #6fe0c3); }
+.tile-c { background: linear-gradient(135deg, #f7a544, #ffc97e); }
+.tile-d { background: linear-gradient(135deg, #f4657a, #ff9aa9); }
+.tile-e { background: linear-gradient(135deg, #8a94a6, #b3bcca); }
+.tile-me { background: linear-gradient(135deg, #5b6b82, #8fa0b8); }
+
+/* 4R APP 图标出现动画 */
+@keyframes app-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.app-icon-4r {
+  animation: app-pop-in 0.35s ease-out;
+}
+
+.app-icon-tile-4r {
+  background: linear-gradient(135deg, #3a7afe 0%, #6aa2ff 100%);
+  letter-spacing: 1px;
+}
+
+.demo-dock {
+  position: fixed;
+  right: var(--spacing-5);
+  bottom: var(--spacing-5);
+  z-index: 50;
+}

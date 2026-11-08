@@ -1,0 +1,38 @@
+{
+  "name": "word-machine-demo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs"
+  },
+  "dependencies": {
+    "@astryxdesign/core": "^0.6.3",
+    "@astryxdesign/theme-butter": "^0.6.3",
+    "@astryxdesign/theme-chocolate": "^0.6.3",
+    "@astryxdesign/theme-gothic": "^0.6.3",
+    "@astryxdesign/theme-matcha": "^0.6.3",
+    "@astryxdesign/theme-neutral": "^0.6.3",
+    "@astryxdesign/theme-stone": "^0.6.3",
+    "@astryxdesign/theme-y2k": "^0.6.3",
+    "@stylexjs/stylex": "^0.19.1",
+    "echarts": "^6.1.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@astryxdesign/cli": "^0.6.3",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
