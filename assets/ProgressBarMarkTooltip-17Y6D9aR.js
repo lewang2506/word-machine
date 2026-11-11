@@ -1,0 +1,1 @@
+import{y as e}from"./padding.stylex-BP0DlNit.js";import{r as t}from"./index-BW4mSSSd.js";var n=e();function r({content:e,children:r}){return(0,n.jsx)(t,{content:e,placement:`above`,focusTrigger:`always`,children:r})}export{r as default};
