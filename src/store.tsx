@@ -17,7 +17,7 @@ import {
   type WordLibrary,
 } from './data';
 
-const STORAGE_KEY = 'wordmachine-demo-v7';
+const STORAGE_KEY = 'wordmachine-demo-v9';
 
 interface Persisted {
   libraries: WordLibrary[];

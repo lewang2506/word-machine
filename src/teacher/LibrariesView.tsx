@@ -12,6 +12,7 @@ import {TextInput} from '@astryxdesign/core/TextInput';
 import {TextArea} from '@astryxdesign/core/TextArea';
 import {Selector} from '@astryxdesign/core/Selector';
 import {Dialog, DialogHeader} from '@astryxdesign/core/Dialog';
+import {ScrollableArea} from '@astryxdesign/core/ScrollableArea';
 import {AlertDialog} from '@astryxdesign/core/AlertDialog';
 import {Pagination} from '@astryxdesign/core/Pagination';
 import {Spinner} from '@astryxdesign/core/Spinner';
@@ -28,18 +29,21 @@ import {useToast} from '@astryxdesign/core/Toast';
 import * as XLSX from 'xlsx';
 import {
   CURRENT_TEACHER,
+  SUBJECT_CATEGORY_MAP,
+  SUBJECT_OPTIONS,
   nextId,
   parseImportLines,
   parseSheetRows,
+  stableHash,
   type Category,
   type ShareScope,
+  type Subject,
   type WordEntry,
   type WordLibrary,
 } from '../data';
 import {useStore} from '../store';
 
 const CEFR_OPTIONS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
-const CATEGORY_OPTIONS: Category[] = ['听力', '阅读', '口语', '写作'];
 const PAGE_SIZE = 10;
 const now = () => new Date().toLocaleString('zh-CN', {hour12: false});
 
@@ -159,9 +163,7 @@ export function LibrariesView() {
                 width={260}
                 isLabelHidden
               />
-              {tab === '自定义词库' && (
-                <Button label="新建单词表" variant="primary" onClick={() => setNewOpen(true)} />
-              )}
+              <Button label="新建单词表" variant="primary" onClick={() => setNewOpen(true)} />
             </Stack>
 
             <Table density="balanced" isStriped hasHover>
@@ -195,7 +197,7 @@ export function LibrariesView() {
                             size="sm"
                             onClick={() => setDetailId(lib.id)}
                           />
-                          {lib.isCustom && isMine && (
+                          {(lib.isCustom ? isMine : true) && (
                             <>
                               <Button
                                 label="批量上传"
@@ -203,12 +205,14 @@ export function LibrariesView() {
                                 size="sm"
                                 onClick={() => setUploadLibId(lib.id)}
                               />
-                              <Button
-                                label="共享"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setSharingLib(lib)}
-                              />
+                              {lib.isCustom && (
+                                <Button
+                                  label="共享"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setSharingLib(lib)}
+                                />
+                              )}
                               <Button
                                 label="删除"
                                 variant="ghost"
@@ -245,7 +249,12 @@ export function LibrariesView() {
             </Stack>
           </Stack>
 
-          <NewLibraryDialog isOpen={newOpen} onOpenChange={setNewOpen} onCreate={addLibrary} />
+          <NewLibraryDialog
+            isOpen={newOpen}
+            onOpenChange={setNewOpen}
+            isCustom={tab === '自定义词库'}
+            onCreate={addLibrary}
+          />
           {uploadLibrary && (
             <UploadDialog
               library={uploadLibrary}
@@ -253,7 +262,11 @@ export function LibrariesView() {
               onOpenChange={(open) => !open && setUploadLibId(null)}
               onParsed={(entries) => {
                 setUploadLibId(null);
-                setConfirm({libraryId: uploadLibrary.id, entries});
+                const fallback = SUBJECT_CATEGORY_MAP[uploadLibrary.subject][0];
+                setConfirm({
+                  libraryId: uploadLibrary.id,
+                  entries: entries.map((e) => ({...e, category: e.category ?? fallback})),
+                });
               }}
             />
           )}
@@ -352,22 +365,22 @@ function ShareDialog({
 function NewLibraryDialog({
   isOpen,
   onOpenChange,
+  isCustom,
   onCreate,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  isCustom: boolean;
   onCreate: (lib: WordLibrary) => void;
 }) {
   const showToast = useToast();
   const [name, setName] = useState('');
   const [subject, setSubject] = useState('');
-  const [category, setCategory] = useState('');
   const [initialized, setInitialized] = useState(false);
   if (isOpen && !initialized) {
     setInitialized(true);
     setName('');
     setSubject('');
-    setCategory('');
   }
   if (!isOpen && initialized) {
     setInitialized(false);
@@ -382,20 +395,16 @@ function NewLibraryDialog({
       showToast({body: '请选择科目分类', type: 'error', uniqueID: 'lib-subject-required'});
       return;
     }
-    if (!category) {
-      showToast({body: '请选择科目', type: 'error', uniqueID: 'lib-category-required'});
-      return;
-    }
     onCreate({
       id: nextId('lib'),
       name: name.trim(),
-      subject: subject as WordLibrary['subject'],
-      categories: [category as WordLibrary['categories'][number]],
+      subject: subject as Subject,
+      categories: [],
       wordCount: 0,
-      isCustom: true,
+      isCustom,
       owner: CURRENT_TEACHER,
-      school: '武汉学校',
-      shareScope: 'none',
+      school: isCustom ? '武汉学校' : undefined,
+      shareScope: isCustom ? 'none' : undefined,
       createdAt: now(),
       entries: [],
     });
@@ -422,18 +431,9 @@ function NewLibraryDialog({
         <Selector
           label="科目分类"
           width="100%"
-          options={['雅思', '托福'].map((s) => ({value: s, label: s}))}
+          options={SUBJECT_OPTIONS.map((s) => ({value: s, label: s}))}
           value={subject}
           onChange={setSubject}
-          placeholder="请选择"
-          isRequired
-        />
-        <Selector
-          label="科目"
-          width="100%"
-          options={['听力', '阅读', '口语', '写作'].map((c) => ({value: c, label: c}))}
-          value={category}
-          onChange={setCategory}
           placeholder="请选择"
           isRequired
         />
@@ -448,17 +448,37 @@ function NewLibraryDialog({
 
 /* ================= 批量上传（第一步下载模板 / 第二步上传） ================= */
 
-const TEMPLATE_ROWS: unknown[][] = [
-  ['单词', '中文释义', '英式音标', '词性', '例句', '例句翻译'],
-  ['abandon', '放弃；抛弃', '/əˈbændən/', 'v.', 'He abandoned his plan.', '他放弃了他的计划。'],
-  ['benefit', '益处；受益', '/ˈbenɪfɪt/', 'n.', 'Exercise brings many benefits.', '运动带来很多益处。'],
-];
-
-function downloadTemplate() {
-  const ws = XLSX.utils.aoa_to_sheet(TEMPLATE_ROWS);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '单元1');
-  XLSX.writeFile(wb, '单词表模板.xlsx');
+/**
+ * 下载 Excel 模板（exceljs 生成，V1.3 起无科目列）：
+ * 系统词库 = 单词/音标/解释/词性/CEFR类型/档位/例句/例句翻译
+ * 自定义词库 = 单词/音标/解释/词性/例句/例句翻译
+ */
+async function downloadTemplate(library: WordLibrary) {
+  const ExcelJS = await import('exceljs');
+  const isCustom = Boolean(library.isCustom);
+  const headers = isCustom
+    ? ['单词', '音标', '解释', '词性', '例句', '例句翻译']
+    : ['单词', '音标', '解释', '词性', 'CEFR类型', '档位', '例句', '例句翻译'];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('单元1');
+  ws.addRow(headers).font = {bold: true};
+  // 示例两行
+  if (isCustom) {
+    ws.addRow(['abandon', '/əˈbændən/', '放弃；抛弃', 'v.', 'He abandoned his plan.', '他放弃了他的计划。']);
+    ws.addRow(['benefit', '/ˈbenɪfɪt/', '益处；受益', 'n.', 'Exercise brings many benefits.', '运动带来很多益处。']);
+  } else {
+    ws.addRow(['abandon', '/əˈbændən/', '放弃；抛弃', 'v.', 'A2', '5.0', 'He abandoned his plan.', '他放弃了他的计划。']);
+    ws.addRow(['benefit', '/ˈbenɪfɪt/', '益处；受益', 'n.', 'B1', '6.0', 'Exercise brings many benefits.', '运动带来很多益处。']);
+  }
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf as ArrayBuffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `单词表模板-${isCustom ? '自定义' : '系统'}-${library.subject}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function UploadDialog({
@@ -492,17 +512,19 @@ function UploadDialog({
 
   const readFile = (f: File | undefined) => {
     if (!f) return;
+    const kind: 'system' | 'custom' = library.isCustom ? 'custom' : 'system';
     const isText = /\.(csv|txt|tsv)$/i.test(f.name);
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const entries = isText
-          ? parseImportLines(String(reader.result ?? ''))
+          ? parseImportLines(String(reader.result ?? ''), kind)
           : (() => {
               const wb = XLSX.read(reader.result, {type: 'array'});
               return wb.SheetNames.flatMap((name) =>
                 parseSheetRows(
                   XLSX.utils.sheet_to_json(wb.Sheets[name], {header: 1, defval: ''}) as unknown[][],
+                  kind,
                 ),
               );
             })();
@@ -558,7 +580,12 @@ function UploadDialog({
               <Stack gap={2} align="start" width="100%">
                 <Heading level={3}>第一步：下载 Excel 模板</Heading>
                 <Text type="supporting">请按照模板格式填写词条后再上传</Text>
-                <Button label="下载模板" variant="secondary" size="sm" onClick={downloadTemplate} />
+                <Button
+                  label="下载模板"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void downloadTemplate(library)}
+                />
               </Stack>
             </Card>
             <Card padding={3} variant="muted" width="100%">
@@ -589,7 +616,10 @@ function UploadDialog({
             <Stack gap={1} align="start" width="100%">
               <Text type="supporting">格式说明：</Text>
               <Text type="supporting">· 每个 sheet 即为一个单元，每个单元最多 300 个单词；</Text>
-              <Text type="supporting">· 一个单词一行，一行包含：单词、音标、解释、例句、例句翻译；</Text>
+              <Text type="supporting">
+                · 一行包含：单词、音标、解释、词性
+                {library.isCustom ? '' : '、CEFR类型、档位'}、例句、例句翻译；
+              </Text>
               <Text type="supporting">· 如需添加多个例句，请以空格行隔开；</Text>
               <Text type="supporting">
                 · 音标、中文释义、例句、例句翻译如未填写，系统将自动匹配；匹配失败的单词可在下一步手动编辑修改。
@@ -629,6 +659,9 @@ function ImportConfirmView({
             <Text type="supporting">
               共解析 {entries.length} 条，确认前可编辑或删除；确认后单词表生成完成。
             </Text>
+            <Text type="supporting">
+              英式音频通过AI生成中，生成完成后可在单词列表中查看并更新。
+            </Text>
           </Stack>
         </LayoutHeader>
       }
@@ -641,6 +674,7 @@ function ImportConfirmView({
                   <TableHeaderCell>单词</TableHeaderCell>
                   <TableHeaderCell>中文释义</TableHeaderCell>
                   <TableHeaderCell>英式音标</TableHeaderCell>
+                  <TableHeaderCell>英式音频</TableHeaderCell>
                   <TableHeaderCell>词性</TableHeaderCell>
                   <TableHeaderCell>例句</TableHeaderCell>
                   <TableHeaderCell>例句翻译</TableHeaderCell>
@@ -653,6 +687,18 @@ function ImportConfirmView({
                     <TableCell>{e.word}</TableCell>
                     <TableCell>{e.meaning}</TableCell>
                     <TableCell>{e.phonetic}</TableCell>
+                    <TableCell>
+                      {e.audioUrl ? (
+                        <Button
+                          label="播放"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void new Audio(e.audioUrl).play().catch(() => {})}
+                        />
+                      ) : (
+                        <Text type="supporting">AI 生成中</Text>
+                      )}
+                    </TableCell>
                     <TableCell>{e.pos ?? '-'}</TableCell>
                     <TableCell>{e.example ?? '-'}</TableCell>
                     <TableCell>{e.exampleCn ?? '-'}</TableCell>
@@ -703,7 +749,7 @@ function ImportConfirmView({
   );
 }
 
-/** 确认页行编辑：6 字段 */
+/** 确认页行编辑：6 字段（V1.3 起无科目） */
 function ConfirmEntryDialog({
   entry,
   isOpen,
@@ -756,6 +802,14 @@ function ConfirmEntryDialog({
           label="英式音标"
           value={form.phonetic}
           onChange={(v) => set({phonetic: v})}
+          width="100%"
+        />
+        <TextInput
+          label="英式音频"
+          value={form.audioUrl ?? ''}
+          onChange={(v) => set({audioUrl: v || undefined})}
+          placeholder="请输入英式音频 URL"
+          description="英式音频通过AI生成中，生成完成后可在单词列表中查看"
           width="100%"
         />
         <TextInput
@@ -845,22 +899,21 @@ function LibraryDetail({library, onBack}: {library: WordLibrary; onBack: () => v
                 width={260}
                 isLabelHidden
               />
-              {isCustom && (
-                <Button
-                  label="新建单词"
-                  variant="primary"
-                  onClick={() => {
-                    setEditing(null);
-                    setFormOpen(true);
-                  }}
-                />
-              )}
+              <Button
+                label="新建单词"
+                variant="primary"
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              />
             </Stack>
             <Table density="balanced" isStriped hasHover>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>单词</TableHeaderCell>
                   <TableHeaderCell>英式音标</TableHeaderCell>
+                  <TableHeaderCell>英式音频</TableHeaderCell>
                   <TableHeaderCell>中文释义</TableHeaderCell>
                   <TableHeaderCell>词性</TableHeaderCell>
                   {isCustom ? (
@@ -871,7 +924,6 @@ function LibraryDetail({library, onBack}: {library: WordLibrary; onBack: () => v
                   ) : (
                     <>
                       <TableHeaderCell>CEFR</TableHeaderCell>
-                      <TableHeaderCell>科目</TableHeaderCell>
                       <TableHeaderCell>话题</TableHeaderCell>
                       <TableHeaderCell>雅思档位</TableHeaderCell>
                     </>
@@ -884,6 +936,18 @@ function LibraryDetail({library, onBack}: {library: WordLibrary; onBack: () => v
                   <TableRow key={entry.id}>
                     <TableCell>{entry.word}</TableCell>
                     <TableCell>{entry.phonetic}</TableCell>
+                    <TableCell>
+                      {entry.audioUrl ? (
+                        <Button
+                          label="播放"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void new Audio(entry.audioUrl).play().catch(() => {})}
+                        />
+                      ) : (
+                        <Text type="supporting">AI 生成中</Text>
+                      )}
+                    </TableCell>
                     <TableCell>{entry.meaning}</TableCell>
                     <TableCell>{entry.pos ?? '-'}</TableCell>
                     {isCustom ? (
@@ -894,7 +958,6 @@ function LibraryDetail({library, onBack}: {library: WordLibrary; onBack: () => v
                     ) : (
                       <>
                         <TableCell>{entry.cefr ?? '-'}</TableCell>
-                        <TableCell>{entry.category ?? '-'}</TableCell>
                         <TableCell>{entry.topic ?? '-'}</TableCell>
                         <TableCell>{entry.band ?? '-'}</TableCell>
                       </>
@@ -922,7 +985,7 @@ function LibraryDetail({library, onBack}: {library: WordLibrary; onBack: () => v
                 ))}
                 {pageEntries.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={isCustom ? 7 : 9}>
+                    <TableCell colSpan={isCustom ? 8 : 9}>
                       <Text type="supporting">
                         {keyword
                           ? '没有匹配的词条'
@@ -1024,11 +1087,14 @@ function WordFormDialog({
   const {importEntries, updateEntry} = useStore();
   const [form, setForm] = useState<WordForm>(EMPTY_FORM);
   const [initializedFor, setInitializedFor] = useState<string | null>(null);
+  // AI 补充后：英式音频字段提示「AI 生成中」
+  const [audioAiHint, setAudioAiHint] = useState(false);
   const isCustom = Boolean(library.isCustom);
 
   // 打开时按新建/编辑初始化（仅一次）
   if (isOpen && initializedFor !== (editing?.id ?? 'new')) {
     setInitializedFor(editing?.id ?? 'new');
+    setAudioAiHint(false);
     setForm(
       editing
         ? {
@@ -1053,10 +1119,51 @@ function WordFormDialog({
   }
 
   const set = (patch: Partial<WordForm>) => setForm((f) => ({...f, ...patch}));
+  const categoryOptions = SUBJECT_CATEGORY_MAP[library.subject] ?? [];
+
+  /** AI 补充：基于单词确定性生成缺失字段（不覆盖已填内容） */
+  const aiFill = () => {
+    const w = form.word.trim();
+    if (!w) {
+      showToast({
+        body: '请先填写英文单词，AI 将基于单词补充其余字段',
+        type: 'error',
+        uniqueID: 'ai-no-word',
+      });
+      return;
+    }
+    const h = stableHash(w.toLowerCase());
+    const poses = ['n.', 'v.', 'adj.', 'adv.'];
+    const topics = ['学术', '日常生活', '科技', '教育'];
+    const cefrs = ['A2', 'B1', 'B2', 'C1'];
+    setForm((f) => ({
+      ...f,
+      meaning: f.meaning || `（AI 生成）${w} 的常用中文释义（待校对）`,
+      phonetic: f.phonetic || `/${w.toLowerCase().replace(/[^a-z]/g, '')}/`,
+      pos: f.pos || poses[h % poses.length],
+      category: f.category || categoryOptions[h % categoryOptions.length] || '',
+      example: f.example || `The word "${w}" appears in this AI-generated example sentence.`,
+      exampleCn: f.exampleCn || `本句为「${w}」的 AI 示例句。`,
+      cefr: f.cefr || cefrs[h % cefrs.length],
+      topic: f.topic || topics[h % topics.length],
+      band: f.band || String(5 + (h % 4)),
+    }));
+    // 英式音频由独立 AI 流水线生成，不在本次补充
+    setAudioAiHint(true);
+    showToast({
+      body: 'AI 已补充缺失字段，请核对后点击确定',
+      type: 'info',
+      uniqueID: 'ai-filled',
+    });
+  };
 
   const submit = () => {
     if (!form.word.trim()) {
       showToast({body: '请填写单词', type: 'error', uniqueID: 'form-word-required'});
+      return;
+    }
+    if (!form.category) {
+      showToast({body: '请选择科目', type: 'error', uniqueID: 'form-category-required'});
       return;
     }
     const bandNum = form.band.trim() === '' ? undefined : Number(form.band);
@@ -1069,13 +1176,13 @@ function WordFormDialog({
       word: form.word.trim(),
       meaning: form.meaning.trim() || '（待补充释义）',
       phonetic: form.phonetic.trim() || `/${form.word.trim().toLowerCase()}/`,
-      audioUrl: isCustom ? undefined : form.audioUrl.trim() || undefined,
+      audioUrl: form.audioUrl.trim() || undefined,
       videoUrl: isCustom ? undefined : form.videoUrl.trim() || undefined,
       pos: form.pos.trim() || undefined,
       example: form.example.trim() || undefined,
       exampleCn: form.exampleCn.trim() || undefined,
       cefr: isCustom ? undefined : form.cefr || undefined,
-      category: isCustom ? undefined : (form.category as Category) || undefined,
+      category: (form.category as Category) || undefined,
       topic: isCustom ? undefined : form.topic.trim() || undefined,
       band: isCustom ? undefined : bandNum,
     };
@@ -1106,7 +1213,9 @@ function WordFormDialog({
         title={editing ? `编辑单词 · ${editing.word}` : '新建单词'}
         onOpenChange={onOpenChange}
       />
-      <Stack gap={3} align="start" padding={4} width="100%">
+      <Stack gap={0} align="start" width="100%">
+        <ScrollableArea label="词条字段" height="55dvh" width="100%" padding={4}>
+          <Stack gap={3} align="start" width="100%">
         <TextInput
           label="英文单词"
           value={form.word}
@@ -1129,12 +1238,36 @@ function WordFormDialog({
           placeholder="请输入英式音标"
           width="100%"
         />
+        <Stack direction="horizontal" gap={2} vAlign="end" width="100%">
+          <TextInput
+            label="英式音频"
+            value={form.audioUrl}
+            onChange={(v) => set({audioUrl: v})}
+            placeholder="请输入或上传英式音频 URL"
+            description={
+              audioAiHint && !form.audioUrl
+                ? '英式音频通过AI生成中，生成完成后可在单词列表中查看'
+                : undefined
+            }
+            width="100%"
+          />
+          <Button label="上传" variant="secondary" size="sm" onClick={() => uploadToast('音频')} />
+        </Stack>
         <TextInput
           label="词性"
           value={form.pos}
           onChange={(v) => set({pos: v})}
           placeholder="请输入词性"
           width="100%"
+        />
+        <Selector
+          label="科目"
+          width="100%"
+          options={categoryOptions.map((c) => ({value: c, label: c}))}
+          value={form.category}
+          onChange={(v) => set({category: v})}
+          placeholder="请选择科目"
+          isRequired
         />
         <TextArea
           label="例句"
@@ -1156,16 +1289,6 @@ function WordFormDialog({
           <>
             <Stack direction="horizontal" gap={2} vAlign="end" width="100%">
               <TextInput
-                label="英式发音音频"
-                value={form.audioUrl}
-                onChange={(v) => set({audioUrl: v})}
-                placeholder="请输入或上传英式发音音频 URL"
-                width="100%"
-              />
-              <Button label="上传" variant="secondary" size="sm" onClick={() => uploadToast('音频')} />
-            </Stack>
-            <Stack direction="horizontal" gap={2} vAlign="end" width="100%">
-              <TextInput
                 label="视频"
                 value={form.videoUrl}
                 onChange={(v) => set({videoUrl: v})}
@@ -1181,14 +1304,6 @@ function WordFormDialog({
               value={form.cefr}
               onChange={(v) => set({cefr: v})}
               placeholder="请选择 CEFR 等级"
-            />
-            <Selector
-              label="科目"
-              width="100%"
-              options={CATEGORY_OPTIONS.map((c) => ({value: c, label: c}))}
-              value={form.category}
-              onChange={(v) => set({category: v})}
-              placeholder="请选择科目"
             />
             <TextInput
               label="话题"
@@ -1206,7 +1321,10 @@ function WordFormDialog({
             />
           </>
         )}
-        <Stack direction="horizontal" gap={2}>
+          </Stack>
+        </ScrollableArea>
+        <Stack direction="horizontal" gap={2} vAlign="center" padding={4} width="100%">
+          <Button label="AI 补充" variant="secondary" onClick={aiFill} />
           <Button label="取消" variant="secondary" onClick={() => onOpenChange(false)} />
           <Button label="确定" variant="primary" onClick={submit} />
         </Stack>

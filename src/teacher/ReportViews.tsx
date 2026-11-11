@@ -33,6 +33,7 @@ export interface PreviewWord {
   word: string;
   meaning: string;
   category: string;
+  audioUrl?: string; // 英式音频（AI 生成完成后才有）
 }
 
 export interface PreviewBatch {
@@ -66,7 +67,7 @@ export function CoreFieldsGrid({values}: {values: string[]}) {
   );
 }
 
-/** 预览单词表：单词 / 中文释义 / 科目 */
+/** 预览单词表：单词 / 中文释义 / 科目 / 英式音频 */
 export function WordListTable({words}: {words: PreviewWord[]}) {
   return (
     <Table density="balanced" isStriped hasHover>
@@ -75,6 +76,7 @@ export function WordListTable({words}: {words: PreviewWord[]}) {
           <TableHeaderCell>单词</TableHeaderCell>
           <TableHeaderCell>中文释义</TableHeaderCell>
           <TableHeaderCell>科目</TableHeaderCell>
+          <TableHeaderCell>英式音频</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -83,11 +85,23 @@ export function WordListTable({words}: {words: PreviewWord[]}) {
             <TableCell>{w.word}</TableCell>
             <TableCell>{w.meaning}</TableCell>
             <TableCell>{w.category}</TableCell>
+            <TableCell>
+              {w.audioUrl ? (
+                <Button
+                  label="播放"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void new Audio(w.audioUrl).play().catch(() => {})}
+                />
+              ) : (
+                <Text type="supporting">AI 生成中</Text>
+              )}
+            </TableCell>
           </TableRow>
         ))}
         {words.length === 0 && (
           <TableRow>
-            <TableCell colSpan={3}>
+            <TableCell colSpan={4}>
               <Text type="supporting">该批次无单词</Text>
             </TableCell>
           </TableRow>
@@ -228,9 +242,14 @@ export function WordsPreviewView({
     ['布置作业', '单词列表预览'],
     onBack,
     <Stack gap={4} align="start" width="100%">
-      <Stack direction="horizontal" gap={3} vAlign="center">
-        <Heading level={1}>{title}</Heading>
-        <Badge variant="info" label="预览" />
+      <Stack gap={1} align="start" width="100%">
+        <Stack direction="horizontal" gap={3} vAlign="center">
+          <Heading level={1}>{title}</Heading>
+          <Badge variant="info" label="预览" />
+        </Stack>
+        <Text type="supporting">
+          英式音频通过AI生成中，生成完成后可在单词列表中查看并更新。
+        </Text>
       </Stack>
       {batches.length > 1 ? (
         <Grid columns={5} gap={4} width="100%">

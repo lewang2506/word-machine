@@ -4,8 +4,17 @@
  * + 音频/视频/例句/例句翻译；词库仅系统维护，无自定义词库
  */
 
-export type Subject = '雅思' | '托福';
-export type Category = '听力' | '阅读' | '口语' | '写作';
+export type Subject = '雅思' | '托福' | 'SAT' | '留学预备';
+export type Category = '听力' | '阅读' | '口语' | '写作' | '词汇' | '语法' | '读写' | '数学';
+
+/** 科目分类 → 可选科目（词条「科目」必填下拉选项，按词库科目分类联动） */
+export const SUBJECT_CATEGORY_MAP: Record<Subject, Category[]> = {
+  留学预备: ['听力', '口语', '词汇', '语法', '阅读', '写作'],
+  雅思: ['听力', '阅读', '写作', '口语'],
+  托福: ['阅读', '听力', '写作', '口语'],
+  SAT: ['读写', '数学'],
+};
+export const SUBJECT_OPTIONS = Object.keys(SUBJECT_CATEGORY_MAP) as Subject[];
 
 /** 自定义词库共享范围：不共享 / 全机构 / 全分校 */
 export type ShareScope = 'none' | 'org' | 'branch';
@@ -117,12 +126,17 @@ const TOPIC_CATEGORY: Record<string, Category> = {
   学术: '写作',
 };
 
+/** 英式发音音频 URL（演示用词典公共发音接口，type=1 英式）；存量词条=已生成完成可直接播放 */
+export const wordAudioUrl = (word: string) =>
+  `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=1`;
+
 function makeEntry([word, meaning, pos, cefr, topic, band]: EntryTuple): WordEntry {
   return {
     id: `seed-${word}`,
     word,
     meaning,
     phonetic: `/${word.toLowerCase().replace(/[^a-z]/g, '')}/`,
+    audioUrl: wordAudioUrl(word),
     pos,
     cefr,
     category: TOPIC_CATEGORY[topic] ?? '听力',
@@ -207,8 +221,21 @@ const CUSTOM_WINTER_TUPLES: EntryTuple[] = [
 /** [单词, 中文释义, 英式音标, 词性, 例句, 例句翻译] —— 自定义词库 6 字段 */
 type CustomTuple = [string, string, string, string, string, string];
 
-function makeCustomEntry([word, meaning, phonetic, pos, example, exampleCn]: CustomTuple): WordEntry {
-  return {id: `seed-c-${word}`, word, meaning, phonetic, pos, example, exampleCn};
+function makeCustomEntry(
+  [word, meaning, phonetic, pos, example, exampleCn]: CustomTuple,
+  category: Category,
+): WordEntry {
+  return {
+    id: `seed-c-${word}`,
+    word,
+    meaning,
+    phonetic,
+    audioUrl: wordAudioUrl(word),
+    pos,
+    example,
+    exampleCn,
+    category,
+  };
 }
 
 const CUSTOM_SELF_TUPLES: CustomTuple[] = [
@@ -231,38 +258,44 @@ const SHARED_WRITING_TUPLES: CustomTuple[] = [
 ];
 
 /**
- * 单元格行 → 词条：单词,中文释义,英式音标,词性,例句,例句翻译
+ * 单元格行 → 词条（列序对齐上传模板，V1.3 起模板无科目列）：
+ * 系统 = 单词,音标,解释,词性,CEFR类型,档位,例句,例句翻译
+ * 自定义 = 单词,音标,解释,词性,例句,例句翻译
  * 仅英文单词必填，其余留空由系统占位（模拟自动匹配）；首格为「单词」视为表头跳过
  */
-function cellsToEntry(cells: unknown[]): WordEntry | null {
-  const [word = '', meaning = '', phonetic = '', pos = '', example = '', exampleCn = ''] = cells.map(
-    (c) => String(c ?? '').trim(),
-  );
+function cellsToEntry(cells: unknown[], kind: 'system' | 'custom'): WordEntry | null {
+  const c = cells.map((x) => String(x ?? '').trim());
+  const [word = '', phonetic = '', meaning = '', pos = ''] = c;
   if (!word || word === '单词') return null;
+  const [cefr, band, example, exampleCn] =
+    kind === 'system' ? [c[4] ?? '', c[5] ?? '', c[6] ?? '', c[7] ?? ''] : ['', '', c[4] ?? '', c[5] ?? ''];
+  const bandNum = band === '' ? undefined : Number(band);
   return {
     id: nextId('w'),
     word,
     meaning: meaning || '（待补充释义）',
     phonetic: phonetic || `/${word.toLowerCase().replace(/[^a-z]/g, '')}/`,
     pos: pos || undefined,
+    cefr: cefr || undefined,
+    band: bandNum !== undefined && !Number.isNaN(bandNum) ? bandNum : undefined,
     example: example || undefined,
     exampleCn: exampleCn || undefined,
   };
 }
 
 /** 解析 CSV/TXT 文本（一行一词，Tab 或逗号分隔） */
-export function parseImportLines(text: string): WordEntry[] {
+export function parseImportLines(text: string, kind: 'system' | 'custom'): WordEntry[] {
   return text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
-    .map((line) => cellsToEntry(line.split(line.includes('\t') ? '\t' : ',')))
+    .map((line) => cellsToEntry(line.split(line.includes('\t') ? '\t' : ','), kind))
     .filter((e): e is WordEntry => e !== null);
 }
 
 /** 解析 Excel 工作表行（xlsx sheet_to_json header:1 输出），跳过表头 */
-export function parseSheetRows(rows: unknown[][]): WordEntry[] {
-  return rows.map((r) => cellsToEntry(r ?? [])).filter((e): e is WordEntry => e !== null);
+export function parseSheetRows(rows: unknown[][], kind: 'system' | 'custom'): WordEntry[] {
+  return rows.map((r) => cellsToEntry(r ?? [], kind)).filter((e): e is WordEntry => e !== null);
 }
 
 export function seedLibraries(): WordLibrary[] {
@@ -316,7 +349,7 @@ export function seedLibraries(): WordLibrary[] {
       school: '武汉学校',
       shareScope: 'none',
       createdAt: '2026-10-20 15:30',
-      entries: CUSTOM_SELF_TUPLES.map((t) => makeCustomEntry(t)),
+      entries: CUSTOM_SELF_TUPLES.map((t) => makeCustomEntry(t, '写作')),
     },
     {
       id: 'lib-custom-2',
@@ -329,7 +362,7 @@ export function seedLibraries(): WordLibrary[] {
       school: '武汉学校',
       shareScope: 'branch',
       createdAt: '2026-10-25 11:12',
-      entries: SHARED_SPEAKING_TUPLES.map((t) => makeCustomEntry(t)),
+      entries: SHARED_SPEAKING_TUPLES.map((t) => makeCustomEntry(t, '口语')),
     },
     {
       id: 'lib-custom-3',
@@ -342,7 +375,7 @@ export function seedLibraries(): WordLibrary[] {
       school: '总部',
       shareScope: 'org',
       createdAt: '2026-10-28 09:45',
-      entries: SHARED_WRITING_TUPLES.map((t) => makeCustomEntry(t)),
+      entries: SHARED_WRITING_TUPLES.map((t) => makeCustomEntry(t, '写作')),
     },
   ];
 }
@@ -466,6 +499,7 @@ export interface VocabItem {
   word: string;
   meaning: string;
   category: string;
+  audioUrl?: string; // 英式音频（存量系统词=已生成可播放）
 }
 
 /** 简单确定性哈希（同一字符串永远得到同一数值） */
@@ -482,6 +516,7 @@ export function baseVocab(subject: string, category?: string): VocabItem[] {
     word: t[0],
     meaning: t[1],
     category: TOPIC_CATEGORY[t[4]] ?? ('听力' as Category),
+    audioUrl: wordAudioUrl(t[0]),
   }));
   const filtered = category ? items.filter((i) => i.category === category) : items;
   return filtered.length > 0 ? filtered : items;

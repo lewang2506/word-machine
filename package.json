@@ -21,6 +21,7 @@
     "@astryxdesign/theme-y2k": "^0.6.3",
     "@stylexjs/stylex": "^0.19.1",
     "echarts": "^6.1.0",
+    "exceljs": "^4.4.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "xlsx": "^0.18.5"

@@ -55,6 +55,17 @@ const CATEGORY_OPTIONS = ['听力', '阅读', '口语', '写作'] as const;
 const BAND_OPTIONS = ['5', '6', '7', '8'] as const;
 const PAGE_SIZE = 10;
 
+/**
+ * 作业方式（多选）：每类技能一种作答形式。
+ * 多选时每个单词每次随机一种；单词不支持所选方式时降级为「口语-中译英（语音）」。
+ */
+const METHOD_OPTIONS = [
+  {group: '听力', value: 'listening-en2zh-audio-choice', label: '英译中（听音选择）'},
+  {group: '口语', value: 'speaking-zh2en-voice', label: '中译英（语音）'},
+  {group: '阅读', value: 'reading-en2zh-choice', label: '英译中（选择）'},
+  {group: '写作', value: 'writing-zh2en-blank', label: '中译英（填空）'},
+] as const;
+
 interface Pool {
   id: string;
   name: string;
@@ -112,14 +123,15 @@ export function AssignView() {
   const [course, setCourse] = useState('雅思强化班·核心词汇');
   const [startDate, setStartDate] = useState<ISODate>('2026-11-05');
   const [endDate, setEndDate] = useState<ISODate>('2026-11-25');
-  // 实时作业：勾选后日期置灰、立即发出；倒计时=整个作业分钟数
+  // 实时作业：仅抽查可选；勾选后日期置灰、立即发出；倒计时=整个作业分钟数（默认 10，上限 60）
   const [isRealtime, setIsRealtime] = useState(false);
   const [countdownMin, setCountdownMin] = useState(10);
-  // 左侧底部：筛选条件
+  // 作业信息：布置类型（单选：单次/多次/抽查）
   const [assignType, setAssignType] = useState<AssignType>('多次');
+  // 作业信息：作业方式（多选，默认全选；多选时每词每次随机一种，不支持则降级口语-中译英语音）
+  const [methods, setMethods] = useState<string[]>(METHOD_OPTIONS.map((m) => m.value));
+  // 页面顶部：科目分类主选择（驱动右侧词池）
   const [subjectFilter, setSubjectFilter] = useState('雅思');
-  const [categoryFilter, setCategoryFilter] = useState('全部');
-  const [bandFilter, setBandFilter] = useState('全部');
   // 右侧：词库列表（系统词库 / 分校词库 双 Tab）
   const [poolTab, setPoolTab] = useState('系统词库');
   const [keyword, setKeyword] = useState('');
@@ -135,7 +147,6 @@ export function AssignView() {
   const selectedClass = classes.find((c) => c.id === classId);
   const allSelected =
     selectedClass != null && studentIds.length === selectedClass.students.length;
-  const isIeltsPoolSource = poolTab === '系统词库' && subjectFilter === '雅思';
 
   /** 右侧行：系统词库 → 按「科目类目 × 档位」叉乘展开；分校词库 → 我的+共享自定义库每库一行 */
   const pools = useMemo<Pool[]>(() => {
@@ -151,7 +162,8 @@ export function AssignView() {
           id: l.id,
           name: l.name,
           words: l.wordCount,
-          categories: l.categories,
+          // 科目筛选按词条「科目」字段派生（词库本身不再持有科目）
+          categories: [...new Set(l.entries.map((e) => e.category).filter(Boolean))] as string[],
           badge: l.owner === CURRENT_TEACHER ? ('我的' as const) : ('共享' as const),
           owner: l.owner,
           school: l.school ?? '—',
@@ -162,13 +174,7 @@ export function AssignView() {
   }, [poolTab, subjectFilter, libraries]);
 
   const filteredPools = pools.filter(
-    (p) =>
-      (categoryFilter === '全部' ||
-        (p.categories
-          ? p.categories.includes(categoryFilter)
-          : p.id.includes(`-${categoryFilter}`))) &&
-      (bandFilter === '全部' || !p.id.startsWith('ielts-') || p.id.endsWith(`-band${bandFilter}`)) &&
-      (appliedKeyword === '' || p.name.includes(appliedKeyword)),
+    (p) => appliedKeyword === '' || p.name.includes(appliedKeyword),
   );
   const displayPools = showSelectedOnly
     ? pools.filter((p) => poolIds.includes(p.id))
@@ -189,15 +195,28 @@ export function AssignView() {
     return Math.max(1, Math.round(diff));
   }, [startDate, endDate]);
 
-  /** 预计布置总词数：多次=Σ每日量×天数（封顶池内余量）；单次=Σ本次布置量；抽查=Σ每池抽查个数 */
+  /** 池内剩余词数（从起始词序起） */
+  const remainingOf = (p: Pool) => {
+    const from = Math.max(1, parseInt(cfgOf(p.id).from, 10) || 1);
+    return Math.max(0, p.words - from + 1);
+  };
+
+  /**
+   * 多次布置每日词量（系统自动计算，不可修改）：
+   * 每日量 = ⌈池内剩余词数 ÷ 作业天数⌉（向上取整）；
+   * 除不尽时最后一天自动只排剩余词（封顶池内余量）；多词库按勾选顺序各自独立排期、同一天合并为一个批次。
+   */
+  const dailyOf = (p: Pool) => Math.ceil(remainingOf(p) / daysNum);
+
+  /** 预计布置总词数：多次=Σmin(每日量×天数, 池内余量)；单次=Σ本次布置量；抽查=Σ每池抽查个数 */
   const plannedWords = useMemo(() => {
     return selectedPools.reduce((sum, p) => {
       const cfg = cfgOf(p.id);
-      const from = Math.max(1, parseInt(cfg.from, 10) || 1);
       const count = Math.max(0, parseInt(cfg.count, 10) || 0);
-      const remaining = Math.max(0, p.words - from + 1);
+      const remaining = remainingOf(p);
       if (assignType === '抽查') return sum + Math.min(count, p.words);
-      return sum + Math.min(assignType === '多次' ? count * daysNum : count, remaining);
+      if (assignType === '多次') return sum + Math.min(dailyOf(p) * daysNum, remaining);
+      return sum + Math.min(count, remaining);
     }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignType, selectedPools, poolCfg, daysNum]);
@@ -237,6 +256,10 @@ export function AssignView() {
       showToast({body: '请至少选择一名学生', type: 'error', uniqueID: 'assign-no-student'});
       return null;
     }
+    if (methods.length === 0) {
+      showToast({body: '请至少选择一种作业方式', type: 'error', uniqueID: 'assign-no-method'});
+      return null;
+    }
     if (!isRealtime && new Date(endDate) <= new Date(startDate)) {
       showToast({body: '截止日期需晚于开始日期', type: 'error', uniqueID: 'assign-bad-date'});
       return null;
@@ -245,15 +268,15 @@ export function AssignView() {
       showToast({body: '请至少勾选一个词库', type: 'error', uniqueID: 'assign-no-lib'});
       return null;
     }
-    const missing = selectedPools.some((p) => !(parseInt(cfgOf(p.id).count, 10) > 0));
+    const missing =
+      assignType !== '多次' &&
+      selectedPools.some((p) => !(parseInt(cfgOf(p.id).count, 10) > 0));
     if (missing) {
       showToast({
         body:
-          assignType === '多次'
-            ? '请为每个勾选词库填写每日布置量'
-            : assignType === '单次'
-              ? '请为每个勾选词库填写本次布置数量'
-              : '请为每个勾选词库填写抽查个数',
+          assignType === '单次'
+            ? '请为每个勾选词库填写本次布置数量'
+            : '请为每个勾选词库填写抽查个数',
         type: 'error',
         uniqueID: 'assign-no-count',
       });
@@ -300,7 +323,7 @@ export function AssignView() {
     const hint = isRealtime
       ? `实时作业已发出 · 限时 ${countdownMin} 分钟`
       : assignType === '多次'
-        ? `AI 已生成 ${daysNum} 天背诵计划`
+        ? `已按 ${daysNum} 天自动分配每日词量`
         : assignType === '单次'
           ? `单次布置 ${plannedWords} 词`
           : `抽查 ${plannedWords} 词`;
@@ -351,15 +374,17 @@ export function AssignView() {
         word: round === 0 ? e.word : `${e.word}·${round + 1}`,
         meaning: e.meaning,
         category: e.category ?? p.categories?.[0] ?? '—',
+        audioUrl: e.audioUrl,
       };
     }
     return mockWordAt(subjectFilter, systemPoolCategory(p.id), p.id, i);
   };
 
-  /** 预览/结果预览共用：按当前勾选与配置切分批次（多次=每批一段；单次/抽查/实时=单批） */
+  /** 预览/结果预览共用：按当前勾选与配置切分批次（多次=每批一段，每日量自动计算；单次/抽查/实时=单批） */
   const buildBatches = (): PreviewBatch[] => {
     const name = title.trim() || defaultTitle;
-    const countOf = (p: Pool) => Math.max(1, parseInt(cfgOf(p.id).count, 10) || 30);
+    const countOf = (p: Pool) =>
+      assignType === '多次' ? dailyOf(p) : Math.max(1, parseInt(cfgOf(p.id).count, 10) || 30);
     const slice = (p: Pool, offset: number, len: number): PreviewWord[] => {
       const from = Math.max(1, parseInt(cfgOf(p.id).from, 10) || 1) - 1;
       const start = from + offset;
@@ -408,7 +433,6 @@ export function AssignView() {
               onChange={(v) => {
                 setSubjectFilter(v);
                 clearPools();
-                if (v === '托福') setBandFilter('全部');
               }}
             />
             <TabList value={tab} onChange={switchTab} hasDivider isFullBleed>
@@ -490,6 +514,18 @@ export function AssignView() {
                       value={course}
                       onChange={setCourse}
                     />
+                    <Selector
+                      label="布置类型"
+                      width="100%"
+                      options={ASSIGN_TYPES.map((t) => ({value: t, label: t}))}
+                      value={assignType}
+                      onChange={(v) => {
+                        const next = v as AssignType;
+                        setAssignType(next);
+                        if (next !== '抽查') setIsRealtime(false);
+                        clearPools();
+                      }}
+                    />
                     <Stack direction="horizontal" gap={3} width="100%">
                       <DateInput
                         label="开始日期"
@@ -507,95 +543,110 @@ export function AssignView() {
                         disabledMessage="实时作业立即发出，无需设置日期"
                       />
                     </Stack>
-                    <Stack direction="horizontal" gap={2} width="100%" vAlign="center">
-                      <CheckboxInput
-                        label="实时作业"
-                        value={isRealtime}
-                        onChange={setIsRealtime}
-                      />
-                      <Popover
-                        placement="below"
-                        content={
-                          <Stack gap={1} padding={3} width={260}>
-                            <Text>
-                              实时作业会马上发出作业，可用于课堂检测；学生端限时{' '}
-                              {countdownMin} 分钟内完成。
-                            </Text>
-                          </Stack>
-                        }
-                      >
-                        <IconButton
-                          label="实时作业说明"
-                          icon={<Icon icon="info" />}
-                          variant="ghost"
-                          size="sm"
-                          tooltip="实时作业说明"
+                    {assignType === '抽查' && (
+                      <Stack direction="horizontal" gap={2} width="100%" vAlign="center">
+                        <CheckboxInput
+                          label="实时作业"
+                          value={isRealtime}
+                          onChange={setIsRealtime}
                         />
-                      </Popover>
-                      {isRealtime && (
-                        <NumberInput
-                          label="倒计时"
-                          value={countdownMin}
-                          onChange={(v) => setCountdownMin(v ?? 1)}
-                          min={1}
-                          max={180}
-                          step={1}
-                          isIntegerOnly
-                          hasNumberSteppers
-                          units="分钟"
-                          width={160}
-                        />
-                      )}
+                        <Popover
+                          placement="below"
+                          content={
+                            <Stack gap={1} padding={3} width={260}>
+                              <Text>
+                                实时作业会马上发出作业，可用于课堂检测；学生端限时{' '}
+                                {countdownMin} 分钟内完成。
+                              </Text>
+                            </Stack>
+                          }
+                        >
+                          <IconButton
+                            label="实时作业说明"
+                            icon={<Icon icon="info" />}
+                            variant="ghost"
+                            size="sm"
+                            tooltip="实时作业说明"
+                          />
+                        </Popover>
+                        {isRealtime && (
+                          <NumberInput
+                            label="倒计时"
+                            value={countdownMin}
+                            onChange={(v) =>
+                              setCountdownMin(Math.min(60, Math.max(1, Math.round(v ?? 1))))
+                            }
+                            min={1}
+                            max={60}
+                            step={1}
+                            isIntegerOnly
+                            hasNumberSteppers
+                            units="分钟"
+                            width={160}
+                          />
+                        )}
+                      </Stack>
+                    )}
+                    <Stack gap={2} align="start" width="100%">
+                      <Stack direction="horizontal" gap={1} vAlign="center">
+                        <Text>作业方式（可多选）</Text>
+                        <Popover
+                          placement="below"
+                          content={
+                            <Stack gap={1} padding={3} width={280}>
+                              <Text>
+                                多选时每个单词每次随机一种方式；优先使用所选方式，若单词不支持该形式，则降级为中译英（语音）。
+                              </Text>
+                            </Stack>
+                          }
+                        >
+                          <IconButton
+                            label="作业方式说明"
+                            icon={<Icon icon="info" />}
+                            variant="ghost"
+                            size="sm"
+                            tooltip="作业方式说明"
+                          />
+                        </Popover>
+                      </Stack>
+                      <Card variant="muted" padding={3} width="100%">
+                        <Stack gap={2} align="start" width="100%">
+                          {METHOD_OPTIONS.map((m) => (
+                            <Stack
+                              key={m.value}
+                              direction="horizontal"
+                              gap={3}
+                              vAlign="center"
+                              width="100%"
+                            >
+                              <Stack width={40}>
+                                <Text>{m.group}</Text>
+                              </Stack>
+                              <CheckboxInput
+                                label={m.label}
+                                value={methods.includes(m.value)}
+                                onChange={(checked) =>
+                                  setMethods((prev) =>
+                                    checked
+                                      ? [...prev, m.value]
+                                      : prev.filter((x) => x !== m.value),
+                                  )
+                                }
+                              />
+                            </Stack>
+                          ))}
+                        </Stack>
+                      </Card>
                     </Stack>
                     <Text type="supporting">
                       {isRealtime
                         ? '实时作业 · 发布后学生端立即开始作答'
                         : assignType === '多次'
-                          ? `共 ${daysNum} 天 · 学生端按天解锁任务`
+                          ? `共 ${daysNum} 天 · 按起始词序自动均分每日词量（池内余量 ÷ 天数，向上取整）`
                           : assignType === '单次'
                             ? '单次布置 · 学生一次完成所选词量'
                             : '抽查测试 · 从所选词库随机抽题'}
                     </Text>
-
-                    <Heading level={3}>筛选条件</Heading>
-                    <Selector
-                      label="布置类型"
-                      width="100%"
-                      options={ASSIGN_TYPES.map((t) => ({value: t, label: t}))}
-                      value={assignType}
-                      onChange={(v) => {
-                        setAssignType(v as AssignType);
-                        clearPools();
-                      }}
-                    />
-                    <Selector
-                      label="科目"
-                      width="100%"
-                      options={['全部', ...CATEGORY_OPTIONS].map((c) => ({
-                        value: c,
-                        label: c,
-                      }))}
-                      value={categoryFilter}
-                      onChange={(v) => {
-                        setCategoryFilter(v);
-                        setPage(1);
-                      }}
-                    />
-                    <Selector
-                      label="档位"
-                      width="100%"
-                      options={['全部', ...BAND_OPTIONS].map((b) => ({
-                        value: b,
-                        label: b === '全部' ? '全部' : `${b} 分`,
-                      }))}
-                      value={bandFilter}
-                      onChange={(v) => {
-                        setBandFilter(v);
-                        setPage(1);
-                      }}
-                      isDisabled={!isIeltsPoolSource}
-                      disabledMessage="档位分词仅雅思词库提供"
-                    />
                   </Stack>
                 </Card>
               </GridSpan>
@@ -671,7 +722,7 @@ export function AssignView() {
                             <>
                               <TableHeaderCell>起始词序</TableHeaderCell>
                               <TableHeaderCell>
-                                {assignType === '多次' ? '每日布置' : '本次布置'}
+                                {assignType === '多次' ? '每日布置（自动）' : '本次布置'}
                               </TableHeaderCell>
                             </>
                           )}
@@ -732,14 +783,18 @@ export function AssignView() {
                                   />
                                 </TableCell>
                                 <TableCell>
-                                  <TextInput
-                                    label={assignType === '多次' ? '每日布置' : '本次布置'}
-                                    value={cfgOf(p.id).count}
-                                    onChange={(v) => setCfg(p.id, {count: v})}
-                                    placeholder={assignType === '多次' ? '如 30' : '如 50'}
-                                    width={72}
-                                    isLabelHidden
-                                  />
+                                  {assignType === '多次' ? (
+                                    <Text>{dailyOf(p).toLocaleString()} 词/天</Text>
+                                  ) : (
+                                    <TextInput
+                                      label="本次布置"
+                                      value={cfgOf(p.id).count}
+                                      onChange={(v) => setCfg(p.id, {count: v})}
+                                      placeholder="如 50"
+                                      width={72}
+                                      isLabelHidden
+                                    />
+                                  )}
                                 </TableCell>
                               </>
                             )}
